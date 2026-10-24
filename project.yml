@@ -1,6 +1,7 @@
 name: WiFiMapper
 options:
   bundleIdPrefix: com.antigravity
+  compatibilityVersion: "Xcode 14.0"
   deploymentTarget:
     iOS: "16.0"
   xcodeVersion: "15.0"
