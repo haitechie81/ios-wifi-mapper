@@ -252,8 +252,9 @@ struct RoomCaptureViewRepresentable: UIViewRepresentable {
                 )
             }
 
+            let finalWalls = extractedWalls
             Task { @MainActor in
-                self.mappingCoordinator.project.walls = extractedWalls
+                self.mappingCoordinator.project.walls = finalWalls
                 self.mappingCoordinator.recomputeRecommendations()
             }
         }

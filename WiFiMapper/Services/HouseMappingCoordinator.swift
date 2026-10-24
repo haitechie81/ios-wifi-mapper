@@ -476,13 +476,16 @@ extension HouseMappingCoordinator: ARSessionDelegate {
             statusText = "AR Tracking unavailable"
         }
 
+        let finalObstacleHits = obstacleHits
+        let finalFloorHits = floorHits
+
         Task { @MainActor in
             self.trackingStatusMessage = statusText
             self.processCameraPoseUpdate(
                 position: camPos2D,
                 yawRadians: yaw,
-                vslamObstaclePoints: obstacleHits,
-                freeRayEndpoints: floorHits
+                vslamObstaclePoints: finalObstacleHits,
+                freeRayEndpoints: finalFloorHits
             )
         }
     }
@@ -502,7 +505,7 @@ extension HouseMappingCoordinator: ARSessionDelegate {
 
             let transform = plane.transform
             let center = SIMD3<Float>(plane.center.x, plane.center.y, plane.center.z)
-            let halfLength = plane.extent.x * 0.5
+            let halfLength = plane.planeExtent.width * 0.5
 
             let localStart = SIMD4<Float>(center.x - halfLength, center.y, center.z, 1.0)
             let localEnd = SIMD4<Float>(center.x + halfLength, center.y, center.z, 1.0)
