@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Note: Access WiFi Information (com.apple.developer.networking.wifi-info) enables NEHotspotNetwork SSID/BSSID on paid Apple Developer accounts. For free personal signing (AltStore/Sideloadly), remove this key if Xcode asks for a paid provisioning profile. -->
+	<key>com.apple.developer.networking.wifi-info</key>
+	<true/>
+</dict>
+</plist>
