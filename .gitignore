@@ -8,6 +8,8 @@ DerivedData/
 Payload/
 .DS_Store
 
-# Python
+# Python & Local TLS Certs
 __pycache__/
 *.pyc
+*.pem
+dist/
