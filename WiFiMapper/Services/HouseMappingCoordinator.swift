@@ -116,14 +116,84 @@ public final class HouseMappingCoordinator: NSObject, ObservableObject {
             project.occupancyGrid.integrateRay(from: position, to: obstaclePt, isObstacleHit: true)
         }
 
+        // 3b. Automatically extract vector WallSegments from high-confidence occupancy grid obstacle clusters
+        autoExtractWallsFromOccupancyGrid()
+
         // 4. Auto-capture a Wi-Fi signal + throughput sample every `autoSampleDistanceMeters` walked
         if let lastSamplePos = lastSampledPosition {
             if lastSamplePos.distance(to: position) >= autoSampleDistanceMeters {
                 recordWiFiSampleAtCurrentPosition()
+                recomputeRecommendations()
             }
         } else {
             recordWiFiSampleAtCurrentPosition()
+            recomputeRecommendations()
         }
+    }
+
+    /// Automatically clusters collinear `.wallObstacle` cells in the occupancy grid into vector `WallSegment`s
+    private func autoExtractWallsFromOccupancyGrid() {
+        let obstacleCells = Set(project.occupancyGrid.cells.filter { $0.value == .wallObstacle }.map(\.key))
+        guard obstacleCells.count >= 4 else { return }
+
+        let cellSize = project.occupancyGrid.cellSizeMeters
+        var synthesized: [WallSegment] = []
+
+        // Scan horizontal runs of >= 3 contiguous obstacle cells
+        let groupedByRow = Dictionary(grouping: obstacleCells, by: \.gy)
+        for (gy, rowCells) in groupedByRow {
+            let sortedX = rowCells.map(\.gx).sorted()
+            var runStart = sortedX[0]
+            var prevX = sortedX[0]
+            for gx in sortedX.dropFirst() {
+                if gx == prevX + 1 {
+                    prevX = gx
+                } else {
+                    if prevX - runStart >= 2 {
+                        let p0 = Point2D(x: Double(runStart) * cellSize, y: (Double(gy) + 0.5) * cellSize)
+                        let p1 = Point2D(x: Double(prevX + 1) * cellSize, y: (Double(gy) + 0.5) * cellSize)
+                        synthesized.append(WallSegment(start: p0, end: p1, material: .drywall, confidence: 0.8))
+                    }
+                    runStart = gx
+                    prevX = gx
+                }
+            }
+            if prevX - runStart >= 2 {
+                let p0 = Point2D(x: Double(runStart) * cellSize, y: (Double(gy) + 0.5) * cellSize)
+                let p1 = Point2D(x: Double(prevX + 1) * cellSize, y: (Double(gy) + 0.5) * cellSize)
+                synthesized.append(WallSegment(start: p0, end: p1, material: .drywall, confidence: 0.8))
+            }
+        }
+
+        // Scan vertical runs of >= 3 contiguous obstacle cells
+        let groupedByCol = Dictionary(grouping: obstacleCells, by: \.gx)
+        for (gx, colCells) in groupedByCol {
+            let sortedY = colCells.map(\.gy).sorted()
+            var runStart = sortedY[0]
+            var prevY = sortedY[0]
+            for gy in sortedY.dropFirst() {
+                if gy == prevY + 1 {
+                    prevY = gy
+                } else {
+                    if prevY - runStart >= 2 {
+                        let p0 = Point2D(x: (Double(gx) + 0.5) * cellSize, y: Double(runStart) * cellSize)
+                        let p1 = Point2D(x: (Double(gx) + 0.5) * cellSize, y: Double(prevY + 1) * cellSize)
+                        synthesized.append(WallSegment(start: p0, end: p1, material: .drywall, confidence: 0.8))
+                    }
+                    runStart = gy
+                    prevY = gy
+                }
+            }
+            if prevY - runStart >= 2 {
+                let p0 = Point2D(x: (Double(gx) + 0.5) * cellSize, y: Double(runStart) * cellSize)
+                let p1 = Point2D(x: (Double(gx) + 0.5) * cellSize, y: Double(prevY + 1) * cellSize)
+                synthesized.append(WallSegment(start: p0, end: p1, material: .drywall, confidence: 0.8))
+            }
+        }
+
+        // Keep ARPlaneAnchor walls (confidence >= 0.9) and merge with grid-synthesized walls
+        let anchorWalls = project.walls.filter { $0.confidence >= 0.89 }
+        project.walls = anchorWalls + synthesized
     }
 
     // MARK: - Manual & Automatic Actions

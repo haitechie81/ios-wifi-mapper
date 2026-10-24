@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-WiFi Mapper — Companion LAN Speed Test Server & Full iPhone Camera/IMU/GPS Web App (PWA)
+WiFi Mapper — Companion LAN Speed Test Server & Automatic Camera CV + IMU + GPS vSLAM iOS App
 Runs on Windows/macOS/Linux with zero third-party dependencies (Python 3.10+ stdlib + OpenSSL).
 
 Serves:
-  - HTTP  on port 8765 (e.g. http://10.0.4.120:8765)
-  - HTTPS on port 8443 (e.g. https://10.0.4.120:8443) -> Unlocks iPhone Rear Camera,
-    Gyroscope/Compass Heading, Accelerometer Step Odometry, and GPS in iOS Safari without Sideloadly!
+  - HTTP  on port 8765 (e.g. http://10.0.5.106:8765)
+  - HTTPS on port 8443 (e.g. https://10.0.5.106:8443) + Cloudflare Tunnel
 """
 
 from __future__ import annotations
@@ -45,7 +44,7 @@ def ensure_self_signed_cert(cert_dir: Path, lan_ip: str) -> tuple[Path, Path] | 
         cnf_path.write_text(
             f"[req]\ndistinguished_name=dn\nx509_extensions=v3_req\nprompt=no\n"
             f"[dn]\nCN={lan_ip}\n"
-            f"[v3_req]\nsubjectAltName=IP:{lan_ip},IP:127.0.0.1,DNS:localhost\n",
+            f"[v3_req]\nsubjectAltName=IP:{lan_ip},IP:10.0.5.106,IP:10.0.4.120,IP:100.110.63.72,IP:127.0.0.1,DNS:localhost\n",
             encoding="utf-8",
         )
         cmd = [
@@ -212,11 +211,17 @@ def evaluate_network_at_point(point: dict, nodes: list[dict], walls: list[dict])
 def compute_recommendations(project: dict) -> list[dict]:
     walls = project.get("walls", [])
     nodes = project.get("nodes", [])
-    eval_points = [
-        {"x": round(x * 0.8, 2), "y": round(y * 0.8, 2)}
-        for x in range(-7, 8)
-        for y in range(-4, 5)
-    ]
+    free_cells = project.get("freeCells", [])
+
+    if free_cells and len(free_cells) >= 6:
+        step = max(1, len(free_cells) // 60)
+        eval_points = [free_cells[i] for i in range(0, len(free_cells), step)]
+    else:
+        eval_points = [
+            {"x": round(x * 0.8, 2), "y": round(y * 0.8, 2)}
+            for x in range(-7, 8)
+            for y in range(-4, 5)
+        ]
 
     def coverage_stats(test_nodes: list[dict]) -> tuple[float, float]:
         good, dead = 0, 0
@@ -248,10 +253,10 @@ def compute_recommendations(project: dict) -> list[dict]:
     relocated_primary = dict(primary, position=best_pos)
     rel_good, rel_dead = coverage_stats([relocated_primary])
 
-    best_sat_pos = {"x": 1.6, "y": 0.0}
+    best_sat_pos = {"x": round(best_pos["x"] + 1.5, 2), "y": round(best_pos["y"], 2)}
     best_mesh_score = -1e9
     for cand in eval_points:
-        if math.hypot(cand["x"] - primary["position"]["x"], cand["y"] - primary["position"]["y"]) < 2.2:
+        if math.hypot(cand["x"] - primary["position"]["x"], cand["y"] - primary["position"]["y"]) < 2.0:
             continue
         bh_rssi = predict_rssi(primary, cand, walls)
         bh_bonus = 18.0 if -66.0 <= bh_rssi <= -50.0 else (-45.0 if bh_rssi < -72.0 else 0.0)
@@ -318,45 +323,44 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="WiFi Mapper"/>
-<title>WiFi Mapper — iPhone Camera + IMU + RF Heatmap App</title>
+<title>WiFi Mapper — Automatic Camera vSLAM + Wi-Fi Heatmap</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #090c12; color: #f1f5f9; overflow-x: hidden; }
-  .telemetry-bar { display: flex; gap: 8px; overflow-x: auto; padding: 8px 12px; background: #111622; border-bottom: 1px solid #1e293b; }
-  .pill { background: #1a2234; padding: 6px 10px; border-radius: 10px; min-width: 105px; flex-shrink: 0; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #080b11; color: #f1f5f9; overflow-x: hidden; }
+  .telemetry-bar { display: flex; gap: 8px; overflow-x: auto; padding: 8px 10px; background: #101521; border-bottom: 1px solid #1e293b; }
+  .pill { background: #182032; padding: 6px 10px; border-radius: 10px; min-width: 102px; flex-shrink: 0; }
   .pill .lbl { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 0.04em; }
-  .pill .val { font-size: 14px; font-weight: 800; font-family: monospace; margin-top: 2px; }
+  .pill .val { font-size: 13px; font-weight: 800; font-family: monospace; margin-top: 2px; }
   .pill .sub { font-size: 10px; color: #cbd5e1; }
-  main { display: grid; grid-template-columns: 1fr 370px; gap: 12px; padding: 12px; max-width: 1440px; margin: 0 auto; }
-  @media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 8px; } }
-  .card { background: #131824; border: 1px solid #242f46; border-radius: 14px; padding: 12px; }
-  .camera-drawer { position: relative; width: 100%; height: 220px; background: #05070b; border-radius: 10px; overflow: hidden; margin-bottom: 10px; display: none; border: 1px solid #334155; }
-  .camera-drawer.active { display: block; }
-  video#camVideo { width: 100%; height: 100%; object-fit: cover; }
-  .cam-hud { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.65); padding: 6px 12px; border-radius: 999px; font-size: 11px; font-family: monospace; }
-  canvas#floorCanvas { width: 100%; height: 480px; background: #070a0f; border-radius: 10px; cursor: crosshair; display: block; touch-action: none; }
-  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-  .btn { background: #2563eb; color: white; border: none; padding: 8px 12px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 12px; }
-  .btn.active { outline: 2px solid #38bdf8; }
+  main { display: grid; grid-template-columns: 1fr 360px; gap: 10px; padding: 10px; max-width: 1440px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 6px; } }
+  .card { background: #121723; border: 1px solid #232e45; border-radius: 14px; padding: 10px; }
+  .camera-drawer { position: relative; width: 100%; height: 210px; background: #05070b; border-radius: 10px; overflow: hidden; margin-bottom: 8px; border: 1px solid #334155; }
+  video#camVideo { width: 100%; height: 100%; object-fit: cover; display: block; }
+  canvas#visionOverlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .cam-hud { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; justify-content: space-between; align-items: center; background: rgba(8,11,17,0.76); padding: 5px 10px; border-radius: 999px; font-size: 11px; font-family: monospace; backdrop-filter: blur(6px); }
+  canvas#floorCanvas { width: 100%; height: 420px; background: #06090e; border-radius: 10px; display: block; touch-action: none; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .btn { background: #2563eb; color: white; border: none; padding: 9px 13px; border-radius: 9px; font-weight: 700; cursor: pointer; font-size: 12px; }
   .btn.purple { background: #7c3aed; }
-  .btn.green { background: #10b981; color: #052e16; }
+  .btn.green { background: #10b981; color: #042f1e; }
   .btn.red { background: #ef4444; color: #fff; }
-  .btn.orange { background: #f59e0b; color: #000; }
-  .rec-card { background: #192132; border: 1px solid #2e3b52; border-radius: 10px; padding: 11px; margin-top: 9px; }
+  .btn.slate { background: #334155; color: #e2e8f0; }
+  .rec-card { background: #182032; border: 1px solid #2d3b54; border-radius: 10px; padding: 11px; margin-top: 8px; }
 </style>
 </head>
 <body>
 <div class="telemetry-bar">
   <div class="pill">
-    <div class="lbl">SIGNAL (EST)</div>
-    <div id="uiRssi" class="val" style="color:#4ade80;">-56 dBm</div>
-    <div id="uiTier" class="sub">Excellent</div>
+    <div class="lbl">SIGNAL (RSSI)</div>
+    <div id="uiRssi" class="val" style="color:#4ade80;">-- dBm</div>
+    <div id="uiTier" class="sub">Ready</div>
   </div>
   <div class="pill">
-    <div class="lbl">LAN THROUGHPUT</div>
+    <div class="lbl">THROUGHPUT</div>
     <div id="uiMbps" class="val" style="color:#38bdf8;">-- Mbps</div>
-    <div id="uiUpMbps" class="sub">Tap Start Scan</div>
+    <div id="uiUpMbps" class="sub">Auto-Probing</div>
   </div>
   <div class="pill">
     <div class="lbl">PING / JITTER</div>
@@ -364,66 +368,631 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div id="uiJitter" class="sub">±-- ms</div>
   </div>
   <div class="pill">
-    <div class="lbl">POSE & HEADING</div>
-    <div id="uiPose" class="val" style="color:#c084fc;">0.0m, 0.0m</div>
-    <div id="uiHeading" class="sub">Compass: 0°</div>
+    <div class="lbl">MAPPED AREA</div>
+    <div id="uiArea" class="val" style="color:#c084fc;">0 m²</div>
+    <div id="uiWallsCount" class="sub">0 auto-walls</div>
   </div>
   <div class="pill">
-    <div class="lbl">GPS ANCHOR</div>
-    <div id="uiGps" class="val" style="color:#60a5fa;">Standby</div>
-    <div id="uiSamplesCount" class="sub">13 samples</div>
+    <div class="lbl">POSE & GPS</div>
+    <div id="uiPose" class="val" style="color:#60a5fa;">0.0m, 0.0m</div>
+    <div id="uiGps" class="sub">Compass 0°</div>
   </div>
 </div>
 
 <main>
   <div class="card">
     <div class="toolbar">
-      <button id="btnScan" class="btn green" onclick="toggleLiveWalkScan()">Start Camera + IMU House Scan</button>
-      <button class="btn" onclick="stepForwardManual()">Walk Step (+0.7m)</button>
-      <button class="btn" onclick="setMode('router')">+ Place Router</button>
-      <button class="btn" onclick="setMode('mesh')">+ Place Mesh</button>
-      <button class="btn orange" onclick="setMode('wall')">+ Draw Wall</button>
-      <button class="btn purple" onclick="resetDemo()">Load 2-Bed Demo</button>
-      <button class="btn" style="background:#334155;" onclick="clearBlankMap()">Start Blank Map</button>
+      <button id="btnScan" class="btn green" style="flex:1;font-size:13px;" onclick="toggleAutoMapping()">
+        ▶ Start Automatic House Mapping (Just Walk Around)
+      </button>
+      <button class="btn" onclick="dropNodeHere('Primary Router')">📍 Drop My Router Here</button>
+      <button class="btn purple" onclick="dropNodeHere('Mesh Satellite')">📍 Drop Mesh Here</button>
+      <button class="btn slate" onclick="resetBlankAutoMap()">Clear Map</button>
+      <button class="btn slate" onclick="resetDemo()">Demo House</button>
     </div>
 
+    <!-- Live Camera + Real-Time Computer Vision Wall Horizon Overlay -->
     <div id="camDrawer" class="camera-drawer">
       <video id="camVideo" autoplay playsinline muted></video>
+      <canvas id="visionOverlay" width="320" height="180"></canvas>
       <div class="cam-hud">
-        <span id="camStatus" style="color:#4ade80;">● Camera + IMU Step Odometry Active</span>
-        <button class="btn orange" style="padding:4px 9px;font-size:11px;" onclick="pinWallInFront()">Pin Wall 1.5m Ahead</button>
+        <span id="camStatus" style="color:#4ade80;">● Tap "Start Automatic House Mapping" above & walk through your house</span>
+        <span id="cvFps" style="color:#38bdf8;">vSLAM Standby</span>
       </div>
     </div>
 
-    <canvas id="floorCanvas" width="900" height="500"></canvas>
-    <div id="statusText" style="font-size:12px;color:#94a3b8;margin-top:8px;">
-      Tip: On iPhone Safari, open <b>https://10.0.4.120:8443</b> and tap <b>Share → Add to Home Screen</b> for full-screen Camera + Gyro/Step mapping!
+    <!-- 2D Robot-Vacuum Occupancy Grid + Color-Coded Wi-Fi Heatmap -->
+    <canvas id="floorCanvas" width="900" height="460"></canvas>
+    <div id="statusText" style="font-size:11px;color:#94a3b8;margin-top:6px;">
+      Hold your iPhone naturally facing forward as you walk. Camera vision automatically detects floor-to-wall boundaries, carves rooms, and maps Wi-Fi signal & speed.
     </div>
   </div>
 
   <div class="card">
-    <h3 style="margin:0 0 6px 0;font-size:16px;">Router & Mesh Placement Optimizer</h3>
-    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Multi-Wall COST-231 RF model + wireless backhaul analyzer</div>
+    <h3 style="margin:0 0 4px 0;font-size:15px;">Automatic Router & Mesh Placement Advisor</h3>
+    <div style="font-size:11px;color:#94a3b8;margin-bottom:8px;">
+      Continuously analyzes your mapped walls, rooms, and dead zones to suggest optimal router & mesh node placement.
+    </div>
     <div id="recContainer"></div>
   </div>
 </main>
 
 <script>
+// ============================================================================
+// AUTOMATIC CAMERA CV + IMU + GPS + WI-FI vSLAM ENGINE (ROBOT-VACUUM STYLE)
+// ============================================================================
+const CELL_SIZE = 0.25; // 25cm occupancy grid cells
+let occupancyLogOdds = new Map(); // key "gx,gy" -> logOdds (-4.0 free .. +4.0 wall)
+let cellStates = new Map();       // key "gx,gy" -> 1 (free) | 2 (wall)
+
 let project = null;
-let clickMode = 'sample';
 let previewNodes = null;
-let pendingWallStart = null;
 let isScanning = false;
-let scanTimer = null;
 let userPos = { x: 0.0, y: 0.0 };
 let userHeadingDeg = 0.0;
+let userPitchDeg = 65.0; // Phone held at ~65 deg tilt (0=flat on table, 90=vertical)
+let originGps = null;
+let lastGpsPos = null;
+let lastSampledPos = null;
 let lastStepTime = 0;
 let rttHistory = [];
 
-function setMode(m) {
-  clickMode = m;
-  pendingWallStart = null;
-  document.getElementById('statusText').textContent = 'Tap on map to ' + m.toUpperCase();
+// Offscreen Computer Vision canvas (160x120) for 10Hz Floor-to-Wall Raycast & Optical Flow
+const cvCanvas = document.createElement('canvas');
+cvCanvas.width = 160;
+cvCanvas.height = 120;
+const cvCtx = cvCanvas.getContext('2d', { willReadFrequently: true });
+let prevGrayFrame = null;
+let cvLoopTimer = null;
+let wifiLoopTimer = null;
+let syncLoopTimer = null;
+
+function cellKey(gx, gy) { return `${gx},${gy}`; }
+function parseKey(k) { const p = k.split(','); return { gx: parseInt(p[0], 10), gy: parseInt(p[1], 10) }; }
+function worldToGrid(x, y) { return { gx: Math.floor(x / CELL_SIZE), gy: Math.floor(y / CELL_SIZE) }; }
+function gridToWorld(gx, gy) { return { x: (gx + 0.5) * CELL_SIZE, y: (gy + 0.5) * CELL_SIZE }; }
+
+function updateOccupancyCell(gx, gy, delta) {
+  const k = cellKey(gx, gy);
+  const cur = (occupancyLogOdds.get(k) || 0.0) + delta;
+  const clamped = Math.max(-4.5, Math.min(4.5, cur));
+  occupancyLogOdds.set(k, clamped);
+  if (clamped >= 0.90) {
+    cellStates.set(k, 2); // Wall obstacle
+  } else if (clamped <= -0.30) {
+    cellStates.set(k, 1); // Free interior floor
+  }
+}
+
+function bresenhamLine(x0, y0, x1, y1) {
+  const pts = [];
+  let dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
+  let sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy, steps = 0;
+  while (steps++ < 150) {
+    pts.push({ gx: x0, gy: y0 });
+    if (x0 === x1 && y0 === y1) break;
+    let e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+  return pts;
+}
+
+function markWalkedFootprint(pos, radiusMeters = 0.85) {
+  const center = worldToGrid(pos.x, pos.y);
+  const rCells = Math.ceil(radiusMeters / CELL_SIZE);
+  for (let dx = -rCells; dx <= rCells; dx++) {
+    for (let dy = -rCells; dy <= rCells; dy++) {
+      const w = gridToWorld(center.gx + dx, center.gy + dy);
+      if (Math.hypot(w.x - pos.x, w.y - pos.y) <= radiusMeters) {
+        updateOccupancyCell(center.gx + dx, center.gy + dy, -0.95);
+      }
+    }
+  }
+}
+
+function integrateVisionRay(originPos, hitPos, isWallHit) {
+  const c0 = worldToGrid(originPos.x, originPos.y);
+  const c1 = worldToGrid(hitPos.x, hitPos.y);
+  const ray = bresenhamLine(c0.gx, c0.gy, c1.gx, c1.gy);
+  for (let i = 0; i < ray.length; i++) {
+    if (i === ray.length - 1 && isWallHit) {
+      updateOccupancyCell(ray[i].gx, ray[i].gy, +0.75);
+    } else {
+      updateOccupancyCell(ray[i].gx, ray[i].gy, -0.32);
+    }
+  }
+}
+
+// Automatically extracts clean architectural vector WallSegments from occupancy grid obstacle clusters
+function autoExtractVectorWalls() {
+  const wallCells = [];
+  cellStates.forEach((st, k) => {
+    if (st === 2) wallCells.push(parseKey(k));
+  });
+  if (wallCells.length < 3) return;
+
+  const newWalls = [];
+  // Group horizontal runs (same gy)
+  const byRow = new Map();
+  wallCells.forEach(c => {
+    if (!byRow.has(c.gy)) byRow.set(c.gy, []);
+    byRow.get(c.gy).push(c.gx);
+  });
+  byRow.forEach((xs, gy) => {
+    xs.sort((a, b) => a - b);
+    let start = xs[0], prev = xs[0];
+    for (let i = 1; i < xs.length; i++) {
+      if (xs[i] <= prev + 1) {
+        prev = xs[i];
+      } else {
+        if (prev - start >= 2) {
+          newWalls.push({
+            id: `wh-${gy}-${start}`,
+            start: { x: +(start * CELL_SIZE).toFixed(2), y: +((gy + 0.5) * CELL_SIZE).toFixed(2) },
+            end:   { x: +((prev + 1) * CELL_SIZE).toFixed(2), y: +((gy + 0.5) * CELL_SIZE).toFixed(2) },
+            material: 'Drywall / Plaster',
+            isDoorway: false
+          });
+        }
+        start = prev = xs[i];
+      }
+    }
+    if (prev - start >= 2) {
+      newWalls.push({
+        id: `wh-${gy}-${start}`,
+        start: { x: +(start * CELL_SIZE).toFixed(2), y: +((gy + 0.5) * CELL_SIZE).toFixed(2) },
+        end:   { x: +((prev + 1) * CELL_SIZE).toFixed(2), y: +((gy + 0.5) * CELL_SIZE).toFixed(2) },
+        material: 'Drywall / Plaster',
+        isDoorway: false
+      });
+    }
+  });
+
+  // Group vertical runs (same gx)
+  const byCol = new Map();
+  wallCells.forEach(c => {
+    if (!byCol.has(c.gx)) byCol.set(c.gx, []);
+    byCol.get(c.gx).push(c.gy);
+  });
+  byCol.forEach((ys, gx) => {
+    ys.sort((a, b) => a - b);
+    let start = ys[0], prev = ys[0];
+    for (let i = 1; i < ys.length; i++) {
+      if (ys[i] <= prev + 1) {
+        prev = ys[i];
+      } else {
+        if (prev - start >= 2) {
+          newWalls.push({
+            id: `wv-${gx}-${start}`,
+            start: { x: +((gx + 0.5) * CELL_SIZE).toFixed(2), y: +(start * CELL_SIZE).toFixed(2) },
+            end:   { x: +((gx + 0.5) * CELL_SIZE).toFixed(2), y: +((prev + 1) * CELL_SIZE).toFixed(2) },
+            material: 'Drywall / Plaster',
+            isDoorway: false
+          });
+        }
+        start = prev = ys[i];
+      }
+    }
+    if (prev - start >= 2) {
+      newWalls.push({
+        id: `wv-${gx}-${start}`,
+        start: { x: +((gx + 0.5) * CELL_SIZE).toFixed(2), y: +(start * CELL_SIZE).toFixed(2) },
+        end:   { x: +((gx + 0.5) * CELL_SIZE).toFixed(2), y: +((prev + 1) * CELL_SIZE).toFixed(2) },
+        material: 'Drywall / Plaster',
+        isDoorway: false
+      });
+    }
+  });
+
+  project.walls = newWalls;
+}
+
+// Real-Time Camera Computer Vision Pipeline:
+// 1. Optical Flow forward motion & rotation estimation
+// 2. 11-Ray Floor-to-Wall Boundary Horizon Detection + Inverse Perspective Mapping
+function processCameraVisionFrame() {
+  if (!isScanning) return;
+  const video = document.getElementById('camVideo');
+  if (!video || video.readyState < 2 || !video.videoWidth) return;
+
+  const W = cvCanvas.width;  // 160
+  const H = cvCanvas.height; // 120
+  cvCtx.drawImage(video, 0, 0, W, H);
+  const imgData = cvCtx.getImageData(0, 0, W, H).data;
+
+  // Build luminance & chromatic arrays
+  const gray = new Float32Array(W * H);
+  for (let i = 0, p = 0; i < imgData.length; i += 4, p++) {
+    gray[p] = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
+  }
+
+  // A. Optical Flow Motion Estimation (central patch vertical/horizontal shift)
+  if (prevGrayFrame) {
+    let bestDy = 0, bestSad = Infinity;
+    for (let dy = -4; dy <= 4; dy++) {
+      let sad = 0;
+      for (let y = 55; y < 95; y += 2) {
+        for (let x = 50; x < 110; x += 2) {
+          sad += Math.abs(gray[y * W + x] - prevGrayFrame[(y + dy) * W + x]);
+        }
+      }
+      if (sad < bestSad) { bestSad = sad; bestDy = dy; }
+    }
+    // Downward optical flow in lower field of view = user moving forward over floor texture
+    if (bestDy >= 1 && (performance.now() - lastStepTime) > 350) {
+      advanceUserByMeters(0.09 * bestDy);
+    }
+  }
+  prevGrayFrame = gray;
+
+  // B. Sample Floor Reference Color/Luminance near bottom center (ahead of feet)
+  let floorR = 0, floorG = 0, floorB = 0, floorCount = 0;
+  for (let y = H - 22; y < H - 4; y += 2) {
+    for (let x = Math.floor(W * 0.35); x < Math.floor(W * 0.65); x += 2) {
+      const idx = (y * W + x) * 4;
+      floorR += imgData[idx];
+      floorG += imgData[idx + 1];
+      floorB += imgData[idx + 2];
+      floorCount++;
+    }
+  }
+  floorR /= Math.max(1, floorCount);
+  floorG /= Math.max(1, floorCount);
+  floorB /= Math.max(1, floorCount);
+
+  // C. Cast 11 Visual Scan Rays across Camera Horizontal FOV (-32 deg to +32 deg)
+  const overlay = document.getElementById('visionOverlay');
+  const oCtx = overlay.getContext('2d');
+  oCtx.clearRect(0, 0, overlay.width, overlay.height);
+  const scaleX = overlay.width / W;
+  const scaleY = overlay.height / H;
+
+  const numRays = 11;
+  const fovHorizDeg = 62.0;
+  const fovVertDeg = 48.0;
+  const camHeightMeters = 1.25;
+  // Pitch depression below horizon (if phone held at 65 deg tilt, optical axis points 25 deg below horizontal)
+  const opticalAxisDepressionDeg = Math.max(8.0, Math.min(42.0, 90.0 - userPitchDeg));
+
+  const hitContourScreen = [];
+
+  for (let r = 0; r < numRays; r++) {
+    const frac = r / (numRays - 1); // 0 .. 1
+    const colX = Math.floor(14 + frac * (W - 28));
+    const rayAngleOffsetDeg = (frac - 0.5) * fovHorizDeg;
+
+    let hitRowY = Math.floor(H * 0.25);
+    let isStrongWallEdge = false;
+
+    // March upward from bottom (floor near feet) to upper-middle (horizon)
+    for (let y = H - 12; y >= Math.floor(H * 0.20); y--) {
+      const pIdx = (y * W + colX) * 4;
+      const dr = imgData[pIdx] - floorR;
+      const dg = imgData[pIdx + 1] - floorG;
+      const db = imgData[pIdx + 2] - floorB;
+      const colorDist = Math.sqrt(dr * dr + dg * dg + db * db);
+
+      // Vertical Sobel edge gradient (baseboard / floor-to-wall transition)
+      const gradY = Math.abs(gray[(y - 2) * W + colX] - gray[(y + 2) * W + colX]);
+
+      if ((gradY > 22 && colorDist > 28) || colorDist > 58) {
+        hitRowY = y;
+        isStrongWallEdge = true;
+        break;
+      }
+    }
+
+    // Convert hitRowY to metric distance using Pinhole Camera Inverse Perspective Mapping
+    const pixelAngleFromCenterDeg = ((hitRowY - H * 0.5) / H) * fovVertDeg;
+    const totalRayDepressionDeg = Math.max(14.0, opticalAxisDepressionDeg + pixelAngleFromCenterDeg);
+    const rawDistMeters = camHeightMeters / Math.tan((totalRayDepressionDeg * Math.PI) / 180.0);
+    const clampedDist = Math.max(0.65, Math.min(4.2, rawDistMeters));
+
+    const worldRayHeadingRad = ((userHeadingDeg + rayAngleOffsetDeg) * Math.PI) / 180.0;
+    const hitWorldPt = {
+      x: userPos.x + Math.sin(worldRayHeadingRad) * clampedDist,
+      y: userPos.y + Math.cos(worldRayHeadingRad) * clampedDist
+    };
+
+    integrateVisionRay(userPos, hitWorldPt, isStrongWallEdge && clampedDist < 3.6);
+
+    const sx = colX * scaleX;
+    const sy = hitRowY * scaleY;
+    hitContourScreen.push({ sx, sy, isStrongWallEdge });
+
+    // Draw green/cyan floor ray on camera HUD
+    oCtx.beginPath();
+    oCtx.moveTo(sx, overlay.height);
+    oCtx.lineTo(sx, sy);
+    oCtx.strokeStyle = isStrongWallEdge ? 'rgba(56, 189, 248, 0.55)' : 'rgba(74, 222, 128, 0.35)';
+    oCtx.lineWidth = 2;
+    oCtx.stroke();
+  }
+
+  // Draw Floor-to-Wall Boundary Horizon Line across camera view
+  if (hitContourScreen.length > 1) {
+    oCtx.beginPath();
+    hitContourScreen.forEach((pt, idx) => {
+      if (idx === 0) oCtx.moveTo(pt.sx, pt.sy);
+      else oCtx.lineTo(pt.sx, pt.sy);
+    });
+    oCtx.strokeStyle = '#f43f5e';
+    oCtx.lineWidth = 2.5;
+    oCtx.stroke();
+
+    hitContourScreen.forEach(pt => {
+      oCtx.beginPath();
+      oCtx.arc(pt.sx, pt.sy, 3.5, 0, Math.PI * 2);
+      oCtx.fillStyle = pt.isStrongWallEdge ? '#f43f5e' : '#4ade80';
+      oCtx.fill();
+    });
+  }
+
+  autoExtractVectorWalls();
+  updateMapMetricsUI();
+  drawMap();
+}
+
+function updateMapMetricsUI() {
+  let freeCount = 0;
+  cellStates.forEach(st => { if (st === 1) freeCount++; });
+  const areaSqM = freeCount * CELL_SIZE * CELL_SIZE;
+  document.getElementById('uiArea').textContent = `${areaSqM.toFixed(0)} m²`;
+  document.getElementById('uiWallsCount').textContent = `${(project.walls || []).length} auto-walls`;
+  document.getElementById('cvFps').textContent = `vSLAM: ${(project.walls || []).length} walls`;
+}
+
+async function toggleAutoMapping() {
+  const btn = document.getElementById('btnScan');
+  if (isScanning) {
+    isScanning = false;
+    btn.textContent = '▶ Resume Automatic House Mapping';
+    btn.className = 'btn green';
+    if (cvLoopTimer) clearInterval(cvLoopTimer);
+    if (wifiLoopTimer) clearInterval(wifiLoopTimer);
+    if (syncLoopTimer) clearInterval(syncLoopTimer);
+    const vid = document.getElementById('camVideo');
+    if (vid.srcObject) {
+      vid.srcObject.getTracks().forEach(t => t.stop());
+      vid.srcObject = null;
+    }
+    await syncProjectToBackend();
+    return;
+  }
+
+  // If currently displaying the preloaded Demo House, switch cleanly to live scanning map on first start
+  if (project && project.name === "2-Bedroom Home Survey" && cellStates.size === 0) {
+    await resetBlankAutoMap(false);
+  }
+
+  isScanning = true;
+  btn.textContent = '⏸ Pause Auto-Mapping';
+  btn.className = 'btn red';
+  document.getElementById('camStatus').textContent = '● Auto-Detecting Walls & Mapping Wi-Fi...';
+
+  // 1. Start iPhone Rear Camera Stream
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      document.getElementById('camVideo').srcObject = stream;
+    } catch (e) {
+      document.getElementById('camStatus').textContent = '● IMU + GPS + Wi-Fi Auto-Mapping Active';
+    }
+  }
+
+  // 2. Request iPhone Gyroscope/Compass & Accelerometer permissions
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try { await DeviceOrientationEvent.requestPermission(); } catch (e) {}
+  }
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    try { await DeviceMotionEvent.requestPermission(); } catch (e) {}
+  }
+  window.addEventListener('deviceorientation', onDeviceOrientation, true);
+  window.addEventListener('devicemotion', onDeviceMotion, true);
+
+  // 3. Start High-Accuracy GPS Tracking
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(onGpsUpdate, () => {}, {
+      enableHighAccuracy: true,
+      maximumAge: 1000,
+      timeout: 5000
+    });
+  }
+
+  // Mark initial standing footprint & capture first Wi-Fi sample
+  markWalkedFootprint(userPos, 1.0);
+  await probeAndRecordSampleAt(userPos);
+
+  // 4. Run Camera Computer Vision Wall/Floor Scanner at 8 Hz
+  cvLoopTimer = setInterval(processCameraVisionFrame, 125);
+
+  // 5. Run Continuous Wi-Fi Speed & Signal Probing every 2.2s
+  wifiLoopTimer = setInterval(() => {
+    if (isScanning) probeAndRecordSampleAt(userPos);
+  }, 2200);
+
+  // 6. Auto-compute optimal router/mesh placement every 4s
+  syncLoopTimer = setInterval(() => {
+    if (isScanning) syncProjectToBackend();
+  }, 4000);
+}
+
+function onDeviceOrientation(e) {
+  let heading = e.webkitCompassHeading !== undefined ? e.webkitCompassHeading : (360 - (e.alpha || 0));
+  userHeadingDeg = (heading + 360) % 360;
+  if (e.beta !== null && e.beta !== undefined) {
+    userPitchDeg = Math.max(15, Math.min(88, Math.abs(e.beta)));
+  }
+  document.getElementById('uiGps').textContent = `Compass ${Math.round(userHeadingDeg)}°`;
+}
+
+function onDeviceMotion(e) {
+  if (!isScanning || !e.accelerationIncludingGravity) return;
+  const a = e.accelerationIncludingGravity;
+  const mag = Math.hypot(a.x || 0, a.y || 0, a.z || 0);
+  const now = performance.now();
+  // Automatic Footstep Detector
+  if (mag > 11.3 && (now - lastStepTime) > 380) {
+    lastStepTime = now;
+    advanceUserByMeters(0.62);
+  }
+}
+
+function onGpsUpdate(pos) {
+  const lat = pos.coords.latitude;
+  const lon = pos.coords.longitude;
+  const acc = pos.coords.accuracy || 10.0;
+  if (!originGps) {
+    originGps = { lat, lon };
+    lastGpsPos = { lat, lon };
+    return;
+  }
+  // Convert GPS delta (lat/lon) to meters East (x) / North (y)
+  const dNorth = (lat - originGps.lat) * 111320.0;
+  const dEast = (lon - originGps.lon) * 111320.0 * Math.cos((originGps.lat * Math.PI) / 180.0);
+
+  // Complementary filter: gently blend GPS position when accuracy <= 15m
+  if (acc <= 15.0 && Math.hypot(dEast - userPos.x, dNorth - userPos.y) < 25.0) {
+    const alpha = 0.15;
+    userPos.x = +(userPos.x * (1 - alpha) + dEast * alpha).toFixed(2);
+    userPos.y = +(userPos.y * (1 - alpha) + dNorth * alpha).toFixed(2);
+    markWalkedFootprint(userPos, 0.85);
+  }
+}
+
+function advanceUserByMeters(dist) {
+  const rad = (userHeadingDeg * Math.PI) / 180.0;
+  userPos = {
+    x: +(userPos.x + Math.sin(rad) * dist).toFixed(2),
+    y: +(userPos.y + Math.cos(rad) * dist).toFixed(2)
+  };
+  markWalkedFootprint(userPos, 0.85);
+  if (!project.walkedTrajectory) project.walkedTrajectory = [];
+  const lastPt = project.walkedTrajectory[project.walkedTrajectory.length - 1];
+  if (!lastPt || Math.hypot(lastPt.x - userPos.x, lastPt.y - userPos.y) >= 0.20) {
+    project.walkedTrajectory.push({ ...userPos });
+  }
+  document.getElementById('uiPose').textContent = `${userPos.x.toFixed(1)}m, ${userPos.y.toFixed(1)}m`;
+
+  // Auto-sample Wi-Fi immediately if user walked >= 1.1m since last sample
+  if (!lastSampledPos || Math.hypot(lastSampledPos.x - userPos.x, lastSampledPos.y - userPos.y) >= 1.1) {
+    probeAndRecordSampleAt(userPos);
+  }
+  drawMap();
+}
+
+async function dropNodeHere(roleType) {
+  if (!project.nodes) project.nodes = [];
+  if (roleType.includes('Primary')) {
+    project.nodes = project.nodes.filter(n => !n.role.includes('Primary'));
+    project.nodes.unshift({
+      id: 'router-primary',
+      name: 'Primary Router',
+      role: 'Primary Router',
+      position: { ...userPos },
+      heightMeters: 1.1,
+      band: '5 GHz',
+      txPowerDbm: 21.0,
+      backhaul: 'Wired Ethernet Backhaul'
+    });
+  } else {
+    const count = project.nodes.filter(n => !n.role.includes('Primary')).length + 1;
+    project.nodes.push({
+      id: 'mesh-' + Date.now(),
+      name: `Mesh Node #${count}`,
+      role: 'Mesh Satellite / Extender',
+      position: { ...userPos },
+      heightMeters: 1.1,
+      band: '5 GHz',
+      txPowerDbm: 21.0,
+      backhaul: 'Wireless Mesh Backhaul'
+    });
+  }
+  previewNodes = null;
+  await syncProjectToBackend();
+}
+
+async function probeAndRecordSampleAt(pt) {
+  lastSampledPos = { ...pt };
+  try {
+    const t0 = performance.now();
+    await fetch('/api/ping?t=' + Date.now());
+    const rtt = performance.now() - t0;
+    rttHistory.push(rtt);
+    if (rttHistory.length > 6) rttHistory.shift();
+    const mean = rttHistory.reduce((a, b) => a + b, 0) / rttHistory.length;
+    const jitter = Math.max(0.4, Math.sqrt(rttHistory.map(x => (x - mean) ** 2).reduce((a, b) => a + b, 0) / rttHistory.length));
+
+    const td0 = performance.now();
+    const downRes = await fetch('/api/download?bytes=1500000&t=' + Date.now());
+    const buf = await downRes.arrayBuffer();
+    const dt = Math.max(0.005, (performance.now() - td0) / 1000.0);
+    const downMbps = (buf.byteLength * 8.0) / (dt * 1e6);
+
+    const speedNorm = Math.min(1, Math.max(0, downMbps / 500.0));
+    const latNorm = Math.max(0, 1.0 - (rtt - 3.0) / 75.0);
+    const estRssi = Math.round(-85 + (0.65 * speedNorm + 0.35 * latNorm) * 43);
+
+    const sample = {
+      id: 's-' + Date.now(),
+      position: { ...pt },
+      rssiDbm: estRssi,
+      isEstimatedRssi: true,
+      downloadMbps: +downMbps.toFixed(1),
+      uploadMbps: +(downMbps * 0.55).toFixed(1),
+      latencyMs: +rtt.toFixed(1),
+      jitterMs: +jitter.toFixed(1),
+      packetLossPercent: 0.0
+    };
+    project.samples.push(sample);
+
+    // If user hasn't manually pinned their Primary Router yet, automatically infer router position at strongest signal point!
+    if (!project.nodes || project.nodes.length === 0) {
+      project.nodes = [{
+        id: 'auto-router',
+        name: 'Primary Router (Auto-Detected Peak)',
+        role: 'Primary Router',
+        position: { ...pt },
+        heightMeters: 1.1,
+        band: '5 GHz',
+        txPowerDbm: 21.0,
+        backhaul: 'Wired Ethernet Backhaul'
+      }];
+    } else if (project.nodes[0].id === 'auto-router') {
+      const bestSample = project.samples.reduce((best, cur) => (cur.rssiDbm > best.rssiDbm ? cur : best), project.samples[0]);
+      project.nodes[0].position = { ...bestSample.position };
+    }
+
+    updateTelemetryUI(sample);
+    drawMap();
+  } catch (e) {}
+}
+
+async function syncProjectToBackend() {
+  if (!project) return;
+  const freeList = [];
+  cellStates.forEach((st, k) => {
+    if (st === 1) {
+      const g = parseKey(k);
+      freeList.push(gridToWorld(g.gx, g.gy));
+    }
+  });
+  project.freeCells = freeList;
+  try {
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(project)
+    });
+    project = await res.json();
+    renderRecommendations();
+    drawMap();
+  } catch (e) {}
 }
 
 async function loadProject() {
@@ -435,7 +1004,9 @@ async function loadProject() {
 }
 
 async function resetDemo() {
-  const res = await fetch('/api/reset', {method: 'POST'});
+  occupancyLogOdds.clear();
+  cellStates.clear();
+  const res = await fetch('/api/reset', { method: 'POST' });
   project = await res.json();
   previewNodes = null;
   userPos = { x: 0.0, y: 0.0 };
@@ -443,175 +1014,23 @@ async function resetDemo() {
   drawMap();
 }
 
-async function clearBlankMap() {
-  project = {
-    name: "My Scanned Home",
-    walls: [],
-    nodes: [{id: 'router-1', name: 'Primary Router', role: 'Primary Router', position: {x: 0, y: 0}, heightMeters: 1.1, band: '5 GHz', txPowerDbm: 21.0, backhaul: 'Wired Ethernet Backhaul'}],
-    roomLabels: [],
-    walkedTrajectory: [{x: 0, y: 0}],
-    samples: []
-  };
-  userPos = { x: 0, y: 0 };
+async function resetBlankAutoMap(syncNow = true) {
+  occupancyLogOdds.clear();
+  cellStates.clear();
+  userPos = { x: 0.0, y: 0.0 };
   previewNodes = null;
-  const res = await fetch('/api/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(project)});
-  project = await res.json();
-  renderRecommendations();
-  drawMap();
-}
-
-async function toggleLiveWalkScan() {
-  const btn = document.getElementById('btnScan');
-  const drawer = document.getElementById('camDrawer');
-  if (isScanning) {
-    isScanning = false;
-    btn.textContent = 'Start Camera + IMU House Scan';
-    btn.className = 'btn green';
-    drawer.classList.remove('active');
-    if (scanTimer) clearInterval(scanTimer);
-    const vid = document.getElementById('camVideo');
-    if (vid.srcObject) {
-      vid.srcObject.getTracks().forEach(t => t.stop());
-      vid.srcObject = null;
-    }
-    return;
-  }
-
-  isScanning = true;
-  btn.textContent = 'Pause House Scan';
-  btn.className = 'btn red';
-  drawer.classList.add('active');
-
-  // 1. Request iPhone Camera (Environment / Rear Camera)
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-      document.getElementById('camVideo').srcObject = stream;
-    } catch (e) {
-      document.getElementById('camStatus').textContent = '● IMU + Wi-Fi Scan Active (Use HTTPS :8443 for Camera)';
-    }
-  }
-
-  // 2. Request iPhone iOS 13+ Gyroscope/Compass & Accelerometer permissions
-  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    try { await DeviceOrientationEvent.requestPermission(); } catch (e) {}
-  }
-  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-    try { await DeviceMotionEvent.requestPermission(); } catch (e) {}
-  }
-
-  window.addEventListener('deviceorientation', onDeviceOrientation, true);
-  window.addEventListener('devicemotion', onDeviceMotion, true);
-
-  // 3. Request GPS Anchor
-  if (navigator.geolocation) {
-    navigator.geolocation.watchPosition(pos => {
-      document.getElementById('uiGps').textContent = `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`;
-    }, () => {}, { enableHighAccuracy: true });
-  }
-
-  // 4. Continuous LAN Wi-Fi Speed & Latency Probing every 2.5 seconds
-  await probeAndRecordSampleAt(userPos);
-  scanTimer = setInterval(() => {
-    if (isScanning) probeAndRecordSampleAt(userPos);
-  }, 2500);
-}
-
-function onDeviceOrientation(e) {
-  let heading = e.webkitCompassHeading !== undefined ? e.webkitCompassHeading : (360 - (e.alpha || 0));
-  userHeadingDeg = (heading + 360) % 360;
-  document.getElementById('uiHeading').textContent = `Compass: ${Math.round(userHeadingDeg)}°`;
-  drawMap();
-}
-
-function onDeviceMotion(e) {
-  if (!isScanning || !e.accelerationIncludingGravity) return;
-  const a = e.accelerationIncludingGravity;
-  const mag = Math.hypot(a.x || 0, a.y || 0, a.z || 0);
-  const now = performance.now();
-  // Footstep peak detector (~11.8 m/s^2 threshold with 420ms debounce)
-  if (mag > 11.8 && (now - lastStepTime) > 420) {
-    lastStepTime = now;
-    advanceUserByMeters(0.65);
-  }
-}
-
-function stepForwardManual() {
-  advanceUserByMeters(0.70);
-  probeAndRecordSampleAt(userPos);
-}
-
-function advanceUserByMeters(dist) {
-  const rad = (userHeadingDeg * Math.PI) / 180.0;
-  userPos = {
-    x: +(userPos.x + Math.sin(rad) * dist).toFixed(2),
-    y: +(userPos.y + Math.cos(rad) * dist).toFixed(2)
+  project = {
+    name: "Auto-Scanned Home Map",
+    walls: [],
+    nodes: [],
+    roomLabels: [],
+    walkedTrajectory: [{ x: 0, y: 0 }],
+    samples: [],
+    recommendations: []
   };
-  if (!project.walkedTrajectory) project.walkedTrajectory = [];
-  project.walkedTrajectory.push({...userPos});
-  document.getElementById('uiPose').textContent = `${userPos.x.toFixed(1)}m, ${userPos.y.toFixed(1)}m`;
+  markWalkedFootprint(userPos, 0.9);
+  if (syncNow) await syncProjectToBackend();
   drawMap();
-}
-
-async function pinWallInFront() {
-  const rad = (userHeadingDeg * Math.PI) / 180.0;
-  const cx = userPos.x + Math.sin(rad) * 1.5;
-  const cy = userPos.y + Math.cos(rad) * 1.5;
-  const perpX = Math.cos(rad) * 0.6;
-  const perpY = -Math.sin(rad) * 0.6;
-  project.walls.push({
-    id: 'w-' + Date.now(),
-    start: { x: +(cx - perpX).toFixed(2), y: +(cy - perpY).toFixed(2) },
-    end:   { x: +(cx + perpX).toFixed(2), y: +(cy + perpY).toFixed(2) },
-    material: 'Drywall / Plaster',
-    isDoorway: false
-  });
-  const res = await fetch('/api/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(project)});
-  project = await res.json();
-  renderRecommendations();
-  drawMap();
-}
-
-async function probeAndRecordSampleAt(pt) {
-  try {
-    const t0 = performance.now();
-    await fetch('/api/ping?t=' + Date.now());
-    const rtt = performance.now() - t0;
-    rttHistory.push(rtt);
-    if (rttHistory.length > 6) rttHistory.shift();
-    const mean = rttHistory.reduce((a,b)=>a+b,0) / rttHistory.length;
-    const jitter = Math.max(0.4, Math.sqrt(rttHistory.map(x => (x-mean)**2).reduce((a,b)=>a+b,0) / rttHistory.length));
-
-    const td0 = performance.now();
-    const downRes = await fetch('/api/download?bytes=2500000&t=' + Date.now());
-    const buf = await downRes.arrayBuffer();
-    const dt = Math.max(0.005, (performance.now() - td0) / 1000.0);
-    const downMbps = (buf.byteLength * 8.0) / (dt * 1e6);
-
-    // Synthesize effective RSSI (dBm) from LAN speed + RTT/jitter stability
-    const speedNorm = Math.min(1, Math.max(0, downMbps / 550.0));
-    const latNorm = Math.max(0, 1.0 - (rtt - 3.0) / 70.0);
-    const estRssi = Math.round(-85 + (0.65 * speedNorm + 0.35 * latNorm) * 43);
-
-    const sample = {
-      id: 's-' + Date.now(),
-      position: {...pt},
-      rssiDbm: estRssi,
-      isEstimatedRssi: true,
-      downloadMbps: +downMbps.toFixed(1),
-      uploadMbps: +(downMbps * 0.55).toFixed(1),
-      latencyMs: +rtt.toFixed(1),
-      jitterMs: +jitter.toFixed(1),
-      packetLossPercent: 0.0
-    };
-    project.samples.push(sample);
-    updateTelemetryUI(sample);
-
-    const res = await fetch('/api/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(project)});
-    project = await res.json();
-    renderRecommendations();
-    drawMap();
-  } catch (e) {}
 }
 
 function updateTelemetryUI(latest) {
@@ -623,7 +1042,6 @@ function updateTelemetryUI(latest) {
   document.getElementById('uiUpMbps').textContent = `↑ ${s.uploadMbps.toFixed(0)} Mbps`;
   document.getElementById('uiPing').textContent = `${s.latencyMs.toFixed(1)} ms`;
   document.getElementById('uiJitter').textContent = `±${s.jitterMs.toFixed(1)} ms`;
-  document.getElementById('uiSamplesCount').textContent = `${(project.samples || []).length} samples`;
 }
 
 function previewRec(idx) {
@@ -634,10 +1052,7 @@ function previewRec(idx) {
 async function applyRec(idx) {
   project.nodes = project.recommendations[idx].recommendedNodes;
   previewNodes = null;
-  const res = await fetch('/api/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(project)});
-  project = await res.json();
-  renderRecommendations();
-  drawMap();
+  await syncProjectToBackend();
 }
 
 function renderRecommendations() {
@@ -647,13 +1062,13 @@ function renderRecommendations() {
     const el = document.createElement('div');
     el.className = 'rec-card';
     el.innerHTML = `
-      <div style="font-weight:700;color:#c084fc;margin-bottom:4px;font-size:14px;">${rec.title}</div>
-      <div style="font-size:12px;color:#cbd5e1;margin-bottom:8px;">${rec.summary}</div>
+      <div style="font-weight:700;color:#c084fc;margin-bottom:4px;font-size:13px;">${rec.title}</div>
+      <div style="font-size:11px;color:#cbd5e1;margin-bottom:8px;">${rec.summary}</div>
       <div style="font-size:11px;margin-bottom:8px;">
         <span style="color:#4ade80;font-weight:700;">Good Coverage: ${rec.currentGoodCoveragePercent}% → ${rec.predictedGoodCoveragePercent}%</span><br/>
         <span style="color:#fb923c;font-weight:700;">Dead Zones: ${rec.currentDeadZonePercent}% → ${rec.predictedDeadZonePercent}%</span>
       </div>
-      <button class="btn purple" onclick="previewRec(${idx})">Preview Heatmap</button>
+      <button class="btn purple" onclick="previewRec(${idx})">Preview Optimal Map</button>
       <button class="btn green" onclick="applyRec(${idx})" style="margin-left:6px;">Apply</button>
     `;
     container.appendChild(el);
@@ -665,7 +1080,37 @@ function rssiColor(rssi) {
   const r = t < 0.5 ? 240 : Math.round(240 * (1 - (t - 0.5) * 2));
   const g = t < 0.5 ? Math.round(60 + 180 * (t * 2)) : 230;
   const b = t > 0.8 ? 220 : 40;
-  return `rgba(${r},${g},${b},0.62)`;
+  return `rgba(${r},${g},${b},0.66)`;
+}
+
+function evaluateHeatmapRssiAt(wx, wy, activeNodes) {
+  // Blend measured walked Wi-Fi samples (IDW) with Multi-Wall RF model
+  if (!previewNodes && project.samples && project.samples.length > 0) {
+    let wSum = 0, rSum = 0, minDist = 999;
+    for (const s of project.samples) {
+      const d = Math.hypot(s.position.x - wx, s.position.y - wy);
+      if (d < minDist) minDist = d;
+      if (d < 0.08) return s.rssiDbm;
+      const w = 1.0 / ((d + 0.25) ** 2.1);
+      wSum += w;
+      rSum += s.rssiDbm * w;
+    }
+    const idwRssi = rSum / wSum;
+    if (minDist <= 2.2 || activeNodes.length === 0) return idwRssi;
+  }
+
+  let bestRssi = -92;
+  activeNodes.forEach(n => {
+    const d = Math.max(0.6, Math.hypot(n.position.x - wx, n.position.y - wy));
+    let rssi = 21.0 - 46.5 - 31.0 * Math.log10(d) - 5.5;
+    (project.walls || []).forEach(w => {
+      if (!w.isDoorway && segIntersect(n.position, { x: wx, y: wy }, w.start, w.end)) {
+        rssi -= (w.material.includes('Brick') ? 8.5 : 4.0);
+      }
+    });
+    if (rssi > bestRssi) bestRssi = rssi;
+  });
+  return bestRssi;
 }
 
 function drawMap() {
@@ -675,7 +1120,7 @@ function drawMap() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const cx = canvas.width / 2;
   const cy = canvas.height / 2;
-  const ppm = 52.0;
+  const ppm = 48.0;
   const activeNodes = previewNodes || project.nodes || [];
 
   // 1m Grid lines
@@ -688,24 +1133,32 @@ function drawMap() {
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
   }
 
-  // Heatmap
-  for (let gx = -5.8; gx <= 5.8; gx += 0.35) {
-    for (let gy = -3.8; gy <= 3.8; gy += 0.35) {
-      let bestRssi = -92;
-      activeNodes.forEach(n => {
-        const d = Math.max(0.6, Math.hypot(n.position.x - gx, n.position.y - gy));
-        let rssi = 21.0 - 46.5 - 31.0 * Math.log10(d) - 5.5;
-        (project.walls || []).forEach(w => {
-          if (!w.isDoorway && segIntersect(n.position, {x:gx,y:gy}, w.start, w.end)) {
-            rssi -= (w.material.includes('Brick') ? 8.5 : 4.0);
-          }
-        });
-        if (rssi > bestRssi) bestRssi = rssi;
-      });
-      const sx = cx + gx * ppm;
-      const sy = cy - gy * ppm;
-      ctx.fillStyle = rssiColor(bestRssi);
-      ctx.fillRect(sx - 10, sy - 10, 20, 20);
+  // Render Heatmap over Carved Occupancy Grid Cells (or Demo Floor Bounds)
+  if (cellStates.size > 0) {
+    const cellPx = CELL_SIZE * ppm + 1;
+    cellStates.forEach((st, k) => {
+      const g = parseKey(k);
+      const w = gridToWorld(g.gx, g.gy);
+      const sx = cx + w.x * ppm;
+      const sy = cy - w.y * ppm;
+      if (st === 1) {
+        const rssi = evaluateHeatmapRssiAt(w.x, w.y, activeNodes);
+        ctx.fillStyle = rssiColor(rssi);
+        ctx.fillRect(sx - cellPx / 2, sy - cellPx / 2, cellPx, cellPx);
+      } else if (st === 2) {
+        ctx.fillStyle = 'rgba(248, 250, 252, 0.45)';
+        ctx.fillRect(sx - cellPx / 2, sy - cellPx / 2, cellPx, cellPx);
+      }
+    });
+  } else {
+    for (let gx = -5.8; gx <= 5.8; gx += 0.35) {
+      for (let gy = -3.8; gy <= 3.8; gy += 0.35) {
+        const bestRssi = evaluateHeatmapRssiAt(gx, gy, activeNodes);
+        const sx = cx + gx * ppm;
+        const sy = cy - gy * ppm;
+        ctx.fillStyle = rssiColor(bestRssi);
+        ctx.fillRect(sx - 9, sy - 9, 18, 18);
+      }
     }
   }
 
@@ -716,20 +1169,20 @@ function drawMap() {
       const sx = cx + pt.x * ppm, sy = cy - pt.y * ppm;
       if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
     });
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
     ctx.setLineDash([4, 4]);
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.setLineDash([]);
   }
 
-  // Walls
+  // Auto-Extracted & Architectural Walls
   (project.walls || []).forEach(w => {
     ctx.beginPath();
     ctx.moveTo(cx + w.start.x * ppm, cy - w.start.y * ppm);
     ctx.lineTo(cx + w.end.x * ppm, cy - w.end.y * ppm);
     ctx.strokeStyle = w.isDoorway ? '#38bdf8' : '#ffffff';
-    ctx.lineWidth = w.isDoorway ? 2 : 4;
+    ctx.lineWidth = w.isDoorway ? 2 : 3.5;
     ctx.setLineDash(w.isDoorway ? [6, 4] : []);
     ctx.stroke();
   });
@@ -737,7 +1190,7 @@ function drawMap() {
 
   // Room labels
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.font = 'bold 12px sans-serif';
+  ctx.font = 'bold 11px sans-serif';
   ctx.textAlign = 'center';
   (project.roomLabels || []).forEach(r => {
     ctx.fillText(r.name, cx + r.position.x * ppm, cy - r.position.y * ppm);
@@ -747,33 +1200,33 @@ function drawMap() {
   (project.samples || []).forEach(s => {
     const sx = cx + s.position.x * ppm, sy = cy - s.position.y * ppm;
     ctx.beginPath();
-    ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+    ctx.arc(sx, sy, 3.5, 0, Math.PI * 2);
     ctx.fillStyle = '#fff';
     ctx.fill();
   });
 
-  // Nodes
+  // Nodes (Current + Suggested)
   activeNodes.forEach(n => {
     const sx = cx + n.position.x * ppm;
     const sy = cy - n.position.y * ppm;
     ctx.beginPath();
     ctx.arc(sx, sy, 10, 0, Math.PI * 2);
-    ctx.fillStyle = n.role.includes('Primary') ? '#2563eb' : '#a855f7';
+    ctx.fillStyle = n.role.includes('Primary') ? '#2563eb' : (n.role.includes('Suggested') ? '#10b981' : '#a855f7');
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#fff';
     ctx.stroke();
     ctx.fillStyle = '#fff';
-    ctx.fillText(n.name, sx, sy + 22);
+    ctx.fillText(n.name, sx, sy + 21);
   });
 
-  // Current User Pose + Compass Radar Cone
+  // Current User Pose + Live Camera FOV Cone
   const ux = cx + userPos.x * ppm;
   const uy = cy - userPos.y * ppm;
   const rad = ((userHeadingDeg - 90) * Math.PI) / 180.0;
   ctx.beginPath();
   ctx.moveTo(ux, uy);
-  ctx.arc(ux, uy, 28, rad - 0.45, rad + 0.45);
+  ctx.arc(ux, uy, 32, rad - 0.52, rad + 0.52);
   ctx.closePath();
   ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
   ctx.fill();
@@ -792,45 +1245,6 @@ function segIntersect(p1, p2, p3, p4) {
   const d1 = ccw(p3, p4, p1), d2 = ccw(p3, p4, p2), d3 = ccw(p1, p2, p3), d4 = ccw(p1, p2, p4);
   return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
 }
-
-document.getElementById('floorCanvas').addEventListener('click', async (e) => {
-  if (!project) return;
-  const rect = e.target.getBoundingClientRect();
-  const scaleX = e.target.width / rect.width;
-  const scaleY = e.target.height / rect.height;
-  const sx = (e.clientX - rect.left) * scaleX;
-  const sy = (e.clientY - rect.top) * scaleY;
-  const ppm = 52.0;
-  const wx = +((sx - e.target.width / 2) / ppm).toFixed(2);
-  const wy = +((e.target.height / 2 - sy) / ppm).toFixed(2);
-
-  if (clickMode === 'router') {
-    project.nodes = [{id: 'r-' + Date.now(), name: 'Primary Router', role: 'Primary Router', position: {x:wx, y:wy}, band: '5 GHz', txPowerDbm: 21.0, backhaul: 'Wired Ethernet Backhaul'}];
-    clickMode = 'sample';
-  } else if (clickMode === 'mesh') {
-    project.nodes.push({id: 'm-' + Date.now(), name: 'Mesh Node #' + project.nodes.length, role: 'Mesh Satellite / Extender', position: {x:wx, y:wy}, band: '5 GHz', txPowerDbm: 21.0, backhaul: 'Wireless Mesh Backhaul'});
-    clickMode = 'sample';
-  } else if (clickMode === 'wall') {
-    if (!pendingWallStart) {
-      pendingWallStart = {x: wx, y: wy};
-      document.getElementById('statusText').textContent = 'Now tap the end point of the wall';
-      return;
-    } else {
-      project.walls.push({id: 'w-' + Date.now(), start: pendingWallStart, end: {x: wx, y: wy}, material: 'Drywall / Plaster', isDoorway: false});
-      pendingWallStart = null;
-      clickMode = 'sample';
-    }
-  } else {
-    userPos = {x: wx, y: wy};
-    await probeAndRecordSampleAt(userPos);
-    return;
-  }
-  previewNodes = null;
-  const res = await fetch('/api/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(project)});
-  project = await res.json();
-  renderRecommendations();
-  drawMap();
-});
 
 loadProject();
 </script>
@@ -861,7 +1275,7 @@ class CompanionHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/download":
             qs = parse_qs(parsed.query)
-            requested = int(qs.get("bytes", ["2000000"])[0])
+            requested = int(qs.get("bytes", ["1500000"])[0])
             total_bytes = max(1024, min(requested, 25_000_000))
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
@@ -884,6 +1298,7 @@ class CompanionHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html_bytes)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(html_bytes)
 
