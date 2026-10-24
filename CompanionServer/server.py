@@ -41,15 +41,22 @@ def ensure_self_signed_cert(cert_dir: Path, lan_ip: str) -> tuple[Path, Path] | 
     if cert_path.exists() and key_path.exists():
         return cert_path, key_path
     try:
+        cnf_path = cert_dir / "openssl_local.cnf"
+        cnf_path.write_text(
+            f"[req]\ndistinguished_name=dn\nx509_extensions=v3_req\nprompt=no\n"
+            f"[dn]\nCN={lan_ip}\n"
+            f"[v3_req]\nsubjectAltName=IP:{lan_ip},IP:127.0.0.1,DNS:localhost\n",
+            encoding="utf-8",
+        )
         cmd = [
             "openssl", "req", "-x509", "-newkey", "rsa:2048",
             "-keyout", str(key_path),
             "-out", str(cert_path),
             "-days", "365", "-nodes",
-            "-subj", f"/CN={lan_ip}",
-            "-addext", f"subjectAltName=IP:{lan_ip},IP:127.0.0.1,DNS:localhost",
+            "-config", str(cnf_path),
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cnf_path.unlink(missing_ok=True)
         return cert_path, key_path
     except Exception:
         return None
