@@ -1,0 +1,13 @@
+# Xcode & SwiftPM
+build/
+.build/
+DerivedData/
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+*.ipa
+Payload/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
