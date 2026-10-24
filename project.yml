@@ -1,0 +1,36 @@
+name: WiFiMapper
+options:
+  bundleIdPrefix: com.antigravity
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+
+targets:
+  WiFiMapper:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: WiFiMapper
+        excludes:
+          - "**/*.entitlements"
+          - "**/Info.plist"
+    info:
+      path: WiFiMapper/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.antigravity.wifimapper
+        INFOPLIST_FILE: WiFiMapper/Info.plist
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+    frameworks:
+      - framework: ARKit.framework
+        implicit: true
+      - framework: RoomPlan.framework
+        implicit: true
+      - framework: CoreLocation.framework
+        implicit: true
+      - framework: NetworkExtension.framework
+        implicit: true
